@@ -7,8 +7,11 @@ branding:
 
 inputs:
   rapidapi-key:
-    description: Your RapidAPI key for the Shipshape API (store it as a secret). The free Basic plan has 15 requests a month.
-    required: true
+    description: Your RapidAPI key for the Shipshape API (store it as a secret). Set this or api-market-key. The free Basic plan has 15 requests a month.
+    default: ""
+  api-market-key:
+    description: Your API.market key for the Shipshape API (store it as a secret). Set this or rapidapi-key.
+    default: ""
   mode:
     description: "`changed` lints only the files the pull request or push changed; `all` lints every matching file in the repository."
     default: changed
@@ -57,7 +60,7 @@ outputs:
     description: API requests used by this run.
     value: ${{ steps.lint.outputs.requests-used }}
   quota-remaining:
-    description: Requests left this month, from RapidAPI's response headers (empty if unknown).
+    description: Requests left this month, from the x-ratelimit-requests-remaining header (empty when the marketplace doesn't send it).
     value: ${{ steps.lint.outputs.quota-remaining }}
 
 runs:
@@ -68,6 +71,7 @@ runs:
       run: '"$GITHUB_ACTION_PATH/scripts/run.sh"'
       env:
         INPUT_RAPIDAPI_KEY: ${{ inputs.rapidapi-key }}
+        INPUT_API_MARKET_KEY: ${{ inputs.api-market-key }}
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_DOCKERFILE_PATHS: ${{ inputs.dockerfile-paths }}
         INPUT_KUBERNETES_PATHS: ${{ inputs.kubernetes-paths }}

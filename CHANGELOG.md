@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/Bytestay/shipshape-action/compare/v1.0.6...v1.1.0) (2026-11-09)
+
+
+### Features
+
+* accept an API.market key as well as a RapidAPI key ([#9](https://github.com/Bytestay/shipshape-action/issues/9)) ([99605c5](https://github.com/Bytestay/shipshape-action/commit/99605c50441cd1b904cdb573fef512a723699f78))
+
+
+### Bug Fixes
+
+* retry a rate-limit 429 instead of reporting the monthly quota as exhausted ([#7](https://github.com/Bytestay/shipshape-action/issues/7)) ([5bdd08e](https://github.com/Bytestay/shipshape-action/commit/5bdd08e2ad221a5d70f506f612b568f683057af3))
+
 ## [1.0.6](https://github.com/Bytestay/shipshape-action/compare/v1.0.5...v1.0.6) (2026-11-06)
 
 

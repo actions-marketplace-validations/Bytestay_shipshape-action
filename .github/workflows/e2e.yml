@@ -1,7 +1,7 @@
 name: E2E
 
-# Runs this action (uses: ./) against the real Shipshape API through RapidAPI.
-# Needs the repository secret RAPIDAPI_KEY; without it the job is skipped.
+# Runs this action (uses: ./) against the real Shipshape API through each marketplace: 2 requests per marketplace.
+# RapidAPI needs the repository secret RAPIDAPI_KEY, API.market needs API_MARKET_KEY; a missing one skips its job.
 on:
   workflow_dispatch:
   schedule:
@@ -12,21 +12,31 @@ permissions:
 
 jobs:
   e2e:
+    name: e2e (${{ matrix.market }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - market: rapidapi
+            secret: RAPIDAPI_KEY
+          - market: api.market
+            secret: API_MARKET_KEY
     env:
-      HAS_KEY: ${{ secrets.RAPIDAPI_KEY != '' }}
+      HAS_KEY: ${{ secrets[matrix.secret] != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: No key
         if: env.HAS_KEY != 'true'
-        run: echo "::warning::RAPIDAPI_KEY is not set; skipping the end-to-end test."
+        run: echo "::warning::${{ matrix.secret }} is not set; skipping the ${{ matrix.market }} end-to-end test."
       - name: Lint the fixtures with the action
         if: env.HAS_KEY == 'true'
         id: lint
         continue-on-error: true   # the fixture Dockerfile has a high finding on purpose
         uses: ./
         with:
-          rapidapi-key: ${{ secrets.RAPIDAPI_KEY }}
+          rapidapi-key: ${{ matrix.market == 'rapidapi' && secrets.RAPIDAPI_KEY || '' }}
+          api-market-key: ${{ matrix.market == 'api.market' && secrets.API_MARKET_KEY || '' }}
           mode: all
           dockerfile-paths: tests/fixtures/repo/Dockerfile
           kubernetes-paths: tests/fixtures/repo/k8s/deployment.yaml
@@ -40,10 +50,11 @@ jobs:
           REQUESTS: ${{ steps.lint.outputs.requests-used }}
           QUOTA: ${{ steps.lint.outputs.quota-remaining }}
           OUTCOME: ${{ steps.lint.outcome }}
+          MARKET: ${{ matrix.market }}
         run: |
           echo "passed=$PASSED worst=$WORST requests=$REQUESTS quota=$QUOTA outcome=$OUTCOME"
           test "$OUTCOME" = failure    # the high finding must fail the step
           test "$PASSED" = false
           test -n "$WORST"
           test "$REQUESTS" = 2
-          test -n "$QUOTA"             # RapidAPI's quota header came through
+          if [ "$MARKET" = rapidapi ]; then test -n "$QUOTA"; fi   # RapidAPI's quota header came through

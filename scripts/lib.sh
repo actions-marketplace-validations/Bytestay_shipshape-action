@@ -2,6 +2,7 @@
 # Functions used by run.sh; sourced by the bats tests too.
 
 SHIPSHAPE_HOST="shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com"
+API_MARKET_URL="https://prod.api.market/api/v1/bytestay/shipshape"
 MAX_BYTES=524288 # the API rejects content over 512 KiB
 GRADES="ABCDEF"
 
@@ -103,8 +104,9 @@ lint() {
   ignore="$(jq -cn --arg s "${INPUT_IGNORE:-}" '$s | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')"
   body="$(jq -cRs --arg fail_on "${INPUT_FAIL_ON:-high}" --argjson ignore "$ignore" \
     '{content: ., fail_on: $fail_on} + (if ($ignore | length) > 0 then {ignore: $ignore} else {} end)' "$file")"
-  local url="${SHIPSHAPE_API_URL:-https://$SHIPSHAPE_HOST}/v1/$type"
-  local auth=(-H "X-RapidAPI-Key: ${INPUT_RAPIDAPI_KEY:-}" -H "X-RapidAPI-Host: $SHIPSHAPE_HOST")
+  local base="https://$SHIPSHAPE_HOST" auth=(-H "X-RapidAPI-Key: ${INPUT_RAPIDAPI_KEY:-}" -H "X-RapidAPI-Host: $SHIPSHAPE_HOST")
+  if [[ ${MARKET:-} == api.market ]]; then base="$API_MARKET_URL"; auth=(-H "x-api-market-key: ${INPUT_API_MARKET_KEY:-}"); fi
+  local url="${SHIPSHAPE_API_URL:-$base}/v1/$type"
   # SHIPSHAPE_API_URL / SHIPSHAPE_AUTH_HEADER let the tests and maintainers call the API directly
   [[ -n ${SHIPSHAPE_AUTH_HEADER:-} ]] && auth=(-H "$SHIPSHAPE_AUTH_HEADER")
   local code

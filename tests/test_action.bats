@@ -19,14 +19,14 @@ setup() {
   echo 200 > "$MOCK_DIR/status_dockerfile"
   echo 200 > "$MOCK_DIR/status_kubernetes"
   export PATH="$ROOT/tests/bin:$PATH"
-  export INPUT_RAPIDAPI_KEY=test-key INPUT_MODE=all INPUT_FAIL_ON=high INPUT_MIN_GRADE="" INPUT_IGNORE=""
+  export INPUT_RAPIDAPI_KEY=test-key INPUT_API_MARKET_KEY="" INPUT_MODE=all INPUT_FAIL_ON=high INPUT_MIN_GRADE="" INPUT_IGNORE=""
   export INPUT_MAX_REQUESTS=10 INPUT_ON_QUOTA_EXCEEDED=warn INPUT_GITHUB_TOKEN=gh-token
   export INPUT_DOCKERFILE_PATHS="**/Dockerfile,**/*.Dockerfile,**/Dockerfile.*,**/Containerfile"
   export INPUT_KUBERNETES_PATHS="**/*.yaml,**/*.yml"
   export INPUT_EXCLUDE_PATHS=".github/**,**/templates/**,**/docker-compose*.y*ml,**/compose*.y*ml"
   export GITHUB_OUTPUT="$BATS_TEST_TMPDIR/output" GITHUB_STEP_SUMMARY="$BATS_TEST_TMPDIR/summary.md"
   export GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=acme/app GITHUB_API_URL=https://api.github.com
-  export SHIPSHAPE_RETRY_DELAY=0
+  export SHIPSHAPE_RETRY_DELAY=0 SHIPSHAPE_RATE_DELAY=0
   unset SHIPSHAPE_API_URL SHIPSHAPE_AUTH_HEADER
   : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
 }
@@ -55,7 +55,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   glob_match app/api/Dockerfile 'app/**/Dockerfile'
   glob_match deploy/k8s/web.yaml 'deploy/**/*.yaml'
   glob_match deploy/web.yaml 'deploy/**/*.yaml'
-  ! glob_match other/Dockerfile 'app/**/Dockerfile'
+  ! glob_match other/Dockerfile 'app/**/Dockerfile' || false
 }
 
 @test "pre-filter: no FROM, not Kubernetes, Helm, too large" {
@@ -73,8 +73,8 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
 @test "grades: F is worse than A" {
   source "$ROOT/scripts/lib.sh"
   grade_worse D C
-  ! grade_worse B C
-  ! grade_worse C C
+  ! grade_worse B C || false
+  ! grade_worse C C || false
 }
 
 # ---------- a normal run ----------
@@ -167,6 +167,29 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   [[ $output == *"::error::Shipshape monthly quota exhausted"* ]]
 }
 
+@test "rate limit (429 without quota): retried, then analysed" {
+  rm "$REPO/k8s/broken.yaml" "$REPO/k8s/deployment.yaml"
+  echo '{"message":"Too many requests"}' > "$MOCK_DIR/body_429"
+  printf '429\n429\n200\n' > "$MOCK_DIR/status_dockerfile"
+  run_action
+  [ "$(out worst-grade)" = D ]
+  [ "$(out requests-used)" = 3 ]
+  [[ $output != *"quota exhausted"* ]]
+  [[ $output != *"rate limit"* ]]
+}
+
+@test "rate limit that doesn't clear: a warning, not a quota error, and the build is not failed by us" {
+  rm "$REPO/k8s/broken.yaml"
+  echo '{"message":"Too many requests"}' > "$MOCK_DIR/body_429"
+  echo 429 > "$MOCK_DIR/status_dockerfile"
+  INPUT_ON_QUOTA_EXCEEDED=fail run_action
+  [ "$status" -eq 0 ]
+  [ "$(out requests-used)" = 4 ]
+  [[ $output == *"::warning::Shipshape rate limit (HTTP 429) after 3 retries"* ]]
+  [[ $output != *"quota exhausted"* ]]
+  grep -q 'not analysed: rate limited' "$GITHUB_STEP_SUMMARY"
+}
+
 @test "5xx: one retry, then a warning and the build is not failed by us" {
   rm "$REPO/k8s/broken.yaml"
   printf '503\n503\n' > "$MOCK_DIR/status_dockerfile"
@@ -210,19 +233,55 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
 @test "no key on a pull request (fork): skipped with a warning" {
   INPUT_RAPIDAPI_KEY="" GITHUB_EVENT_NAME=pull_request run_action
   [ "$status" -eq 0 ]
-  [[ $output == *"Shipshape skipped: no rapidapi-key"* ]]
+  [[ $output == *"Shipshape skipped: no rapidapi-key or api-market-key"* ]]
 }
 
 @test "no key outside a pull request: error" {
   INPUT_RAPIDAPI_KEY="" GITHUB_EVENT_NAME=push run_action
   [ "$status" -eq 1 ]
-  [[ $output == *"::error::rapidapi-key is empty"* ]]
+  [[ $output == *"::error::No API key: set rapidapi-key or api-market-key"* ]]
+  [[ $output == *"api.market/store/bytestay/shipshape"* ]]
 }
 
-@test "the key is masked" {
+@test "the key is masked and sent as RapidAPI headers" {
   rm "$REPO/k8s/broken.yaml"
   run_action
   [[ $output == *"::add-mask::test-key"* ]]
+  grep -qx 'https://shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'X-RapidAPI-Key: test-key' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'X-RapidAPI-Host: shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com' "$MOCK_DIR/lint_calls.log"
+  ! grep -qi 'x-api-market-key' "$MOCK_DIR/lint_calls.log" || false
+}
+
+@test "an api-market-key is masked and sent to the API.market gateway" {
+  rm "$REPO/k8s/broken.yaml"
+  INPUT_RAPIDAPI_KEY="" INPUT_API_MARKET_KEY=am-key run_action
+  [[ $output == *"::add-mask::am-key"* ]]
+  [ "$(out requests-used)" = 2 ]
+  [ "$(out worst-grade)" = D ]
+  [ -z "$(out quota-remaining)" ]
+  grep -qx 'https://prod.api.market/api/v1/bytestay/shipshape/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'https://prod.api.market/api/v1/bytestay/shipshape/v1/kubernetes' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'x-api-market-key: am-key' "$MOCK_DIR/lint_calls.log"
+  ! grep -qi 'rapidapi' "$MOCK_DIR/lint_calls.log" || false
+}
+
+@test "API.market bad key (HTTP 400): refused, with the API.market store link" {
+  echo '{"message":"Invalid x-api-market-key or x-magicapi-key defined in headers"}' > "$MOCK_DIR/body_400"
+  echo 400 > "$MOCK_DIR/status_dockerfile"
+  INPUT_RAPIDAPI_KEY="" INPUT_API_MARKET_KEY=am-key run_action
+  [ "$status" -eq 1 ]
+  [[ $output == *"Shipshape refused the key (HTTP 400: Invalid x-api-market-key"* ]]
+  [[ $output == *"https://api.market/store/bytestay/shipshape"* ]]
+  [ "$(requests)" -eq 1 ]
+  grep -q 'not analysed: key refused (HTTP 400)' "$GITHUB_STEP_SUMMARY"
+}
+
+@test "both keys set: fails early" {
+  INPUT_API_MARKET_KEY=am-key run_action
+  [ "$status" -eq 1 ]
+  [[ $output == *"Set rapidapi-key or api-market-key, not both."* ]]
+  [ ! -f "$MOCK_DIR/requests.log" ]
 }
 
 @test "mode=changed on a pull request lints only the files the PR changed" {
@@ -231,7 +290,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   INPUT_MODE=changed GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$BATS_TEST_TMPDIR/event.json" run_action
   [ "$(out requests-used)" = 1 ]
   grep -q '| `Dockerfile` | D |' "$GITHUB_STEP_SUMMARY"
-  ! grep -q 'k8s/deployment.yaml' "$GITHUB_STEP_SUMMARY"
+  ! grep -q 'k8s/deployment.yaml' "$GITHUB_STEP_SUMMARY" || false
 }
 
 @test "mode=changed without a diff (workflow_dispatch) falls back to every file" {

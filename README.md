@@ -17,9 +17,9 @@ Lint the **Dockerfiles and Kubernetes manifests** a pull request changes, right 
 
 Every finding comes with the line, the fix and the standard behind it. Every file gets an A–F grade.
 
-It calls the [Shipshape API](https://shipshape.bytestay.pt) with **your own RapidAPI key**.
+It calls the [Shipshape API](https://shipshape.bytestay.pt) with **your own key**, from RapidAPI or API.market.
 
-- The free Basic plan has 15 requests a month.
+- The free plan has 15 requests a month on both.
 - One file is one request.
 
 ```yaml
@@ -42,6 +42,18 @@ jobs:
 2. Add your RapidAPI key as the repository secret `RAPIDAPI_KEY`.
 3. Add the workflow above.
 
+### With an API.market key
+
+Subscribe to [Shipshape on API.market](https://api.market/store/bytestay/shipshape) instead (the Free plan is $0 with a hard limit). Then store the key as `API_MARKET_KEY` and pass it as `api-market-key`:
+
+```yaml
+      - uses: bytestay/shipshape-action@v1
+        with:
+          api-market-key: ${{ secrets.API_MARKET_KEY }}
+```
+
+Set one key, not both. The action calls the marketplace the key belongs to.
+
 ## What you get
 
 - **Annotations on the pull request diff:**
@@ -61,7 +73,8 @@ jobs:
 
 | input | default | meaning |
 |---|---|---|
-| `rapidapi-key` | *required* | your RapidAPI key |
+| `rapidapi-key` | *empty* | your RapidAPI key; set this or `api-market-key` |
+| `api-market-key` | *empty* | your API.market key; set this or `rapidapi-key` |
 | `mode` | `changed` | `changed`: only the files the pull request (or push) changed; `all`: every matching file |
 | `dockerfile-paths` | `**/Dockerfile,**/*.Dockerfile,**/Dockerfile.*,**/Containerfile` | comma-separated globs |
 | `kubernetes-paths` | `**/*.yaml,**/*.yml` | comma-separated globs |
@@ -82,7 +95,7 @@ jobs:
 | `lowest-score` | the lowest score among analysed files |
 | `findings-total` | total number of findings across analysed files |
 | `requests-used` | API requests used by this run |
-| `quota-remaining` | requests left this month, from RapidAPI's `x-ratelimit-requests-remaining` header |
+| `quota-remaining` | requests left this month, from the `x-ratelimit-requests-remaining` header; empty when the marketplace doesn't send it |
 
 ## Saving requests
 
@@ -104,7 +117,7 @@ When fewer than 3 are left, the action warns you.
 | situation | what the action does |
 |---|---|
 | no key on a pull request from a fork (forks don't get secrets) | warning, step passes |
-| key invalid or not subscribed (401/403) | error with the subscribe link, step fails |
+| key invalid or not subscribed (401/403, or 400 from API.market) | error with the subscribe link, step fails |
 | file can't be parsed (422) | error annotation on that file, step fails |
 | quota exhausted (429) | `on-quota-exceeded: warn` gives a warning and the step passes; `fail` fails it |
 | API down or timing out | one retry, then a warning: **your build is never failed because of us** |
@@ -141,7 +154,7 @@ shellcheck -x scripts/*.sh tests/bin/curl
 actionlint
 ```
 
-The end-to-end test (`.github/workflows/e2e.yml`) runs the action against the real API monthly, with the `RAPIDAPI_KEY` secret.
+The end-to-end test (`.github/workflows/e2e.yml`) runs the action against the real API monthly, through each marketplace: with the `RAPIDAPI_KEY` secret and with the `API_MARKET_KEY` secret.
 
 ## Licence
 
