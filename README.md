@@ -156,6 +156,10 @@ actionlint
 
 The end-to-end test (`.github/workflows/e2e.yml`) runs the action against the real API monthly, through each marketplace: with the `RAPIDAPI_KEY` secret and with the `API_MARKET_KEY` secret.
 
+## History
+
+Formerly Hybrid Forge Lab. This repository continues `hybridforgelab/shipshape-action` under the ByteStay name since November 2026, so the older commits come from there.
+
 ## Licence
 
 MIT.
